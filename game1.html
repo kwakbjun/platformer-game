@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Platformer Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            background: #87CEEB;
+            touch-action: none; /* 터치 이벤트 기본 동작 비활성화 */
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // 캔버스 크기를 윈도우 크기에 맞춤
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // 팝업 창 표시
+        alert("[게임설명]\n박스 움직이기: 방향키\n점프: 스페이스바\n노란색 코인: 일반 코인\n빨간색 코인: 더블 점프 코인\n보라색 코인: 10,000점 코인");
+
+        // 플레이어 설정
+        const player = {
+            x: 50,
+            y: canvas.height - 50,
+            width: 30,
+            height: 30,
+            color: 'blue',
+            speed: 5,
+            dx: 0,
+            dy: 0,
+            gravity: 0.5,
+            jumpPower: 10,
+            jumps: 2,
+            canDoubleJump: false,
+            onGround: false,
+            downThrough: false
+        };
+
+        let platforms = [];
+        let coins = [];
+        let score = 0;
+        let level = 1;
+        let confetti = [];
+        let confettiActive = false;
+        let confettiCounter = 0;
+        let lastConfettiScore = 0; // 마지막으로 빵빠래가 나온 점수
+
+        // 키 입력 처리
+        const keys = {
+            left: false,
+            right: false,
+            up: false,
+            down: false,
+            space: false
+        };
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') keys.left = true;
+            if (e.key === 'ArrowRight') keys.right = true;
+            if (e.key === 'ArrowUp') keys.up = true;
+            if (e.key === 'ArrowDown') keys.down = true;
+            if (e.key === ' ') keys.space = true;
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft') keys.left = false;
+            if (e.key === 'ArrowRight') keys.right = false;
+            if (e.key === 'ArrowUp') keys.up = false;
+            if (e.key === 'ArrowDown') keys.down = false;
+            if (e.key === ' ') keys.space = false;
+        });
+
+        // 터치 이벤트 처리
+        canvas.addEventListener('touchstart', handleTouchStart, false);
+        canvas.addEventListener('touchend', handleTouchEnd, false);
+        canvas.addEventListener('touchmove', handleTouchMove, false);
+
+        function handleTouchStart(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            if (touch.clientX < canvas.width / 2) {
+                keys.left = true;
+            } else {
+                keys.right = true;
+            }
+            keys.space = true;
+        }
+
+        function handleTouchEnd(e) {
+            e.preventDefault();
+            keys.left = false;
+            keys.right = false;
+            keys.space = false;
+        }
+
+        function handleTouchMove(e) {
+            e.preventDefault();
+        }
+
+        // 랜덤한 위치 생성 함수
+        function getRandomInt(min, max) {
+            return Math.floor(Math.random() * (max - min)) + min;
+        }
+
+        // 충돌 감지 함수
+        function isOverlapping(x, y, width, height, platforms) {
+            for (let i = 0; i < platforms.length; i++) {
+                let platform = platforms[i];
+                if (x < platform.x + platform.width &&
+                    x + width > platform.x &&
+                    y < platform.y + platform.height &&
+                    y + height > platform.y) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // 빵빠래 설정 함수
+        function createConfetti() {
+            confetti = [];
+            for (let i = 0; i < 100; i++) {
+                confetti.push({
+                    x: getRandomInt(0, canvas.width),
+                    y: getRandomInt(-20, -10),
+                    dx: getRandomInt(-5, 5),
+                    dy: getRandomInt(2, 10),
+                    color: `hsl(${getRandomInt(0, 360)}, 100%, 50%)`,
+                    size: getRandomInt(2, 6)
+                });
+            }
+            confettiActive = true;
+            confettiCounter = 100; // 빵빠래 지속 시간
+        }
+
+        // 새로운 레벨 설정 함수
+        function loadLevel(level) {
+            platforms = [
+                { x: 0, y: canvas.height - 20, width: canvas.width, height: 20 }
+            ];
+
+            coins = [
+                { x: canvas.width / 2, y: canvas.height - 40, width: 10, height: 10, color: 'red', super: true, bonus: false }
+            ]; // 바닥에 더블 점프 코인 추가
+
+            for (let i = 0; i < level + 2; i++) {
+                let coinX, coinY, platformX, platformY;
+                let overlap;
+                do {
+                    coinX = getRandomInt(100, canvas.width - 100);
+                    coinY = getRandomInt(100, canvas.height - 150);
+                    platformX = coinX - 20;
+                    platformY = coinY + 20;
+                    overlap = isOverlapping(platformX, platformY, 50, 10, platforms);
+                } while (overlap);
+
+                const coinType = Math.random();
+                let coin = {
+                    x: coinX,
+                    y: coinY,
+                    width: 10,
+                    height: 10,
+                    color: 'gold',
+                    super: false,
+                    bonus: false
+                };
+
+                if (coinType < 0.1) { // 10% 확률로 보라색 보너스 코인
+                    coin.color = 'purple';
+                    coin.bonus = true;
+                } else if (coinType < 0.3) { // 20% 확률로 슈퍼 점프 코인
+                    coin.color = 'red';
+                    coin.super = true;
+                }
+
+                coins.push(coin);
+                platforms.push({
+                    x: platformX,
+                    y: platformY,
+                    width: 50,
+                    height: 10
+                });
+            }
+
+            // 발판이 겹치지 않도록 추가 발판 생성
+            for (let i = 0; i < level; i++) {
+                let platformX, platformY, overlap;
+                do {
+                    platformX = getRandomInt(0, canvas.width - 50);
+                    platformY = getRandomInt(100, canvas.height - 20);
+                    overlap = isOverlapping(platformX, platformY, 50, 10, platforms);
+                } while (overlap);
+
+                platforms.push({
+                    x: platformX,
+                    y: platformY,
+                    width: 50,
+                    height: 10
+                });
+            }
+        }
+
+        // 게임 초기화 함수
+        function init() {
+            score = 0;
+            level = 1;
+            lastConfettiScore = 0;
+            loadLevel(level);
+        }
+
+        // 게임 업데이트 함수
+        function update() {
+            // 플레이어 이동
+            player.dx = 0;
+            if (keys.left) player.dx = -player.speed;
+            if (keys.right) player.dx = player.speed;
+
+            if (keys.space && player.jumps > 0) {
+                if (keys.down && player.onGround) {
+                    player.downThrough = true;
+                    player.dy += player.jumpPower;
+                } else {
+                    player.dy = -player.jumpPower;
+                }
+                player.jumps--;
+                player.onGround = false;
+                keys.space = false; // 점프 키를 뗄 때까지 기다림
+            }
+
+            player.dy += player.gravity;
+            player.x += player.dx;
+            player.y += player.dy;
+
+            // 충돌 감지
+            player.onGround = false;
+            platforms.forEach(platform => {
+                if (player.x < platform.x + platform.width &&
+                    player.x + player.width > platform.x &&
+                    player.y < platform.y + platform.height &&
+                    player.y + player.height > platform.y) {
+                    if (player.dy > 0 && !player.downThrough) {
+                        player.onGround = true;
+                        player.dy = 0;
+                        player.y = platform.y - player.height;
+                        player.jumps = player.canDoubleJump ? 2 : 1; // 플랫폼에 닿으면 점프 초기화
+                    }
+                }
+            });
+
+            if (player.downThrough && !keys.down) {
+                player.downThrough = false; // 아래로 내려가기 종료
+            }
+
+            // 화면 경계 감지
+            if (player.y + player.height > canvas.height) {
+                player.onGround = true;
+                player.dy = 0;
+                player.y = canvas.height - player.height;
+                player.jumps = player.canDoubleJump ? 2 : 1; // 바닥에 닿으면 점프 초기화
+            }
+
+            if (player.x < 0) player.x = 0;
+            if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+
+            // 동전 수집
+            coins.forEach((coin, index) => {
+                if (player.x < coin.x + coin.width &&
+                    player.x + player.width > coin.x &&
+                    player.y < coin.y + coin.height &&
+                    player.y + player.height > coin.y) {
+                    coins.splice(index, 1);
+                    if (coin.bonus) {
+                        score += 1000;
+                    } else {
+                        score += 10;
+                    }
+                    if (coin.super) {
+                        player.canDoubleJump = true;
+                    }
+                }
+            });
+
+            // 모든 동전을 수집하면 다음 레벨로
+            if (coins.length === 0) {
+                loadLevel(level + 1); // 다음 레벨로
+            }
+
+            // 1000점 단위로 빵빠래
+            if (Math.floor(score / 1000) > Math.floor(lastConfettiScore / 1000)) {
+                createConfetti();
+                lastConfettiScore = score;
+            }
+
+            // 빵빠래 업데이트
+            if (confettiActive) {
+                confetti.forEach((c, index) => {
+                    c.x += c.dx;
+                    c.y += c.dy;
+                    if (c.y > canvas.height) {
+                        confetti.splice(index, 1);
+                    }
+                });
+                confettiCounter--;
+                if (confettiCounter <= 0) {
+                    confettiActive = false;
+                }
+            }
+        }
+
+        // 게임 렌더링 함수
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 플레이어 그리기
+            ctx.fillStyle = player.color;
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+
+            // 플랫폼 그리기
+            platforms.forEach(platform => {
+                ctx.fillStyle = 'green';
+                ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+            });
+
+            // 동전 그리기
+            coins.forEach(coin => {
+                ctx.fillStyle = coin.color;
+                ctx.fillRect(coin.x, coin.y, coin.width, coin.height);
+            });
+
+            // 빵빠래 그리기
+            if (confettiActive) {
+                confetti.forEach(c => {
+                    ctx.fillStyle = c.color;
+                    ctx.fillRect(c.x, c.y, c.size, c.size);
+                });
+            }
+
+            // 점수 및 레벨 표시
+            ctx.fillStyle = 'black';
+            ctx.font = '20px Arial';
+            ctx.fillText('Score: ' + score, 10, 20);
+            ctx.fillText('Level: ' + level, 10, 40);
+        }
+
+        // 게임 루프
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 게임 시작
+        init();
+        gameLoop();
+
+        // 창 크기 변경 시 캔버스 크기 조정
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+    </script>
+</body>
+</html>
